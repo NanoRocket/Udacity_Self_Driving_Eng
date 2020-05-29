@@ -48,7 +48,7 @@ def region_of_interest(img, vertices):
     return masked_image
 
 
-def draw_lines(img, lines, color=[255, 0, 0], thickness=2):
+def draw_lines(img, lines, color=(0, 0, 255), thickness=4):
     """
     NOTE: this is the function you might want to use as a starting point once you want to 
     average/extrapolate the line segments you detect to map out the full
@@ -65,9 +65,50 @@ def draw_lines(img, lines, color=[255, 0, 0], thickness=2):
     If you want to make the lines semi-transparent, think about combining
     this function with the weighted_img() function below
     """
+    left_x_points = []
+    left_y_points = []
+    right_x_points = []
+    right_y_points = []
+
     for line in lines:
         for x1,y1,x2,y2 in line:
-            cv2.line(img, (x1, y1), (x2, y2), color, thickness)
+            slope = (y2 - y1)/(x2 - x1)
+            if slope < 0: 
+                left_x_points.append(x1)
+                left_x_points.append(x2)
+                left_y_points.append(y1)
+                left_y_points.append(y2)
+
+            else:
+                right_x_points.append(x1)
+                right_x_points.append(x2)
+                right_y_points.append(y1)
+                right_y_points.append(y2)
+
+    # SHOULD MAKE A NEW FUNCTION FOR THIS
+    # want to extrapolate up to the highest y value
+    max_y_coord = min(min(left_y_points), min(right_y_points))
+
+    left_slope, left_intercept = np.polyfit(left_x_points, left_y_points,1)
+    right_slope, right_intercept = np.polyfit(right_x_points, right_y_points, 1)
+
+    # get our 8 points to plot:
+    bottom = img.shape[0]
+    
+    ly1 = bottom
+    #ly2 = max_y_coord
+    ly2 = bottom//2 + 60
+    lx1 = int((ly1-left_intercept)/left_slope)
+    lx2 = int((ly2-left_intercept)/left_slope)
+    
+    ry1 = bottom
+    #ry2 = max_y_coord
+    ry2 = bottom//2 + 60
+    rx1 = int((ry1-right_intercept)/right_slope)
+    rx2 = int((ry2-right_intercept)/right_slope)
+
+    cv2.line(img, (lx1, ly1), (lx2, ly2), color, thickness)
+    cv2.line(img, (rx1, ry1), (rx2, ry2), color, thickness)
 
 def hough_lines(img, rho, theta, threshold, min_line_len, max_line_gap):
     """
@@ -82,7 +123,7 @@ def hough_lines(img, rho, theta, threshold, min_line_len, max_line_gap):
 
 # Python 3 has support for cool math symbols.
 
-def weighted_img(img, initial_img, α=0.8, β=1., γ=0.):
+def weighted_img(img, initial_img, a=0.8, b=1., γ=0.):
     """
     `img` is the output of the hough_lines(), An image with lines drawn on it.
     Should be a blank image (all black) with lines drawn on it.
@@ -94,69 +135,54 @@ def weighted_img(img, initial_img, α=0.8, β=1., γ=0.):
     initial_img * α + img * β + γ
     NOTE: initial_img and img must be the same shape!
     """
-    return cv2.addWeighted(initial_img, α, img, β, γ)
+    return cv2.addWeighted(initial_img, a, img, b, γ)
 
 import os
 
 directory = 'test_images'
-directory_save = 'test_videos_output/'
+directory_save = 'test_images_output/'
 
 # The following comes primarily from the Udacity quiz, only parameters changed.
 for image_name in os.listdir(directory):
     # Read in and grayscale the image
     image = cv2.imread('test_images/' + str(image_name))
-    gray = cv2.cvtColor(image,cv2.COLOR_RGB2GRAY)
+    gray = grayscale(image)
 
     # Define a kernel size and apply Gaussian smoothing
-    kernel_size = 5
-    blur_gray = cv2.GaussianBlur(gray,(kernel_size, kernel_size),0)
+    kernel_size = 17
+    blur_gray = gaussian_blur(gray, kernel_size)
 
     # Define our parameters for Canny and apply
-    low_threshold = 50
-    high_threshold = 150
-    edges = cv2.Canny(blur_gray, low_threshold, high_threshold)
+    low_threshold = 10
+    high_threshold = 40
+    edges = canny(blur_gray, low_threshold, high_threshold)
 
-    # Next we'll create a masked edges image using cv2.fillPoly()
-    mask = np.ones_like(edges)*255   
+    # masking
+    left_flat = [100, 540]
+    apex = [480, 290]
+    right_flat = [910, 540]
 
-    # This time we are defining a four sided polygon to mask
-    # first we mask: define
-    origin = (0, 0)
-    left_bottom = (0, 540)
-    left_flat = (100, 540)
-    apex = (480, 290)
-    right_flat = (910, 540)
-    right_bottom = (960, 540)
-    right_top = (960, 0)
+    points = [left_flat, apex, right_flat]
+    vertices = np.array([points], dtype=np.int32)
 
-    points = [origin, left_bottom, left_flat, apex, right_flat, right_bottom, right_top]
-    mask_color = [0]  
-    cv2.fillPoly(mask, np.array([points], dtype=np.int32), mask_color)
-
-    masked_edges = cv2.bitwise_and(edges, mask)
+    masked_edges = region_of_interest(edges, [vertices])
     
     # Define the Hough transform parameters
     # Make a blank the same size as our image to draw on
     rho = 1 # distance resolution in pixels of the Hough grid
     theta = np.pi/180 # angular resolution in radians of the Hough grid
-    threshold = 10     # minimum number of votes (intersections in Hough grid cell)
-    min_line_length = 10 #minimum number of pixels making up a line
-    max_line_gap = 5    # maximum gap in pixels between connectable line segments
-    line_image = np.copy(image) # creating a blank to draw lines on
+    threshold = 20     # minimum number of votes (intersections in Hough grid cell)
+    min_line_length = 5  #minimum number of pixels making up a line
+    max_line_gap = 1    # maximum gap in pixels between connectable line segments
 
     # Run Hough on edge detected image
     # Output "lines" is an array containing endpoints of detected line segments
-    lines = cv2.HoughLinesP(masked_edges, rho, theta, threshold, np.array([]), min_line_length, max_line_gap)
-
-    # Iterate over the output "lines" and draw lines on a blank image
-    for line in lines:
-        for x1,y1,x2,y2 in line:
-            cv2.line(line_image,(x1,y1),(x2,y2),(255,0,0),3)
-
-    # Create a "color" binary image to combine with line image
-    color_edges = np.dstack((masked_edges, masked_edges, masked_edges)) 
-
+    hough_img = hough_lines(masked_edges, rho, theta, threshold, min_line_length, max_line_gap)
+ 
     # Draw the lines on the edge image
-    lines_edges = cv2.addWeighted(color_edges, 0.8, line_image, 1, 0) 
+    # Create a "color" binary image to combine with line image
+    line_copy= np.copy(image) # creating a blank to draw lines on
+
+    lines_edges = weighted_img(hough_img, line_copy, .8, 1.0, 0.0) 
     plt.imshow(lines_edges)
-    cv2.imwrite(os.path.join(directory_save, str(image_name)), line_image)
+    cv2.imwrite(os.path.join(directory_save, str(image_name)), lines_edges)
